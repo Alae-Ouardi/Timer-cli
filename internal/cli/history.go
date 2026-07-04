@@ -16,15 +16,18 @@ import (
 	"timer/internal/timeutil"
 )
 
+const historyPageSize = 20
+
 var (
 	historySearch string
 	historyExport string
+	historyPage   int
 )
 
 var historyCmd = &cobra.Command{
 	Use:     "history",
 	Aliases: []string{"h"},
-	Short:   "Show past timer sessions, with optional search and export",
+	Short:   "Show past timer sessions, with optional search, pagination, and export",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		var records []store.HistoryRecord
 		var err error
@@ -43,8 +46,7 @@ var historyCmd = &cobra.Command{
 
 		switch historyExport {
 		case "":
-			printHistoryTable(records)
-			return nil
+			return printHistoryTable(records, historyPage, historyPageSize)
 		case "json":
 			return exportHistoryJSON(records)
 		case "csv":
@@ -57,18 +59,47 @@ var historyCmd = &cobra.Command{
 
 func init() {
 	historyCmd.Flags().StringVar(&historySearch, "search", "", "filter records by title substring")
-	historyCmd.Flags().StringVar(&historyExport, "export", "", "export format: json or csv (writes to stdout)")
+	historyCmd.Flags().StringVar(&historyExport, "export", "", "export format: json or csv (writes to stdout, ignores pagination)")
+	historyCmd.Flags().IntVar(&historyPage, "page", 1, "page of results to show (20 records per page)")
 	rootCmd.AddCommand(historyCmd)
 }
 
-func printHistoryTable(records []store.HistoryRecord) {
+// paginate slices all into the requested page of pageSize records, newest
+// first (the caller is expected to have already sorted all). Returns the
+// page's records and the total number of pages. Returns an error if page
+// is out of range.
+func paginate(all []store.HistoryRecord, page, pageSize int) ([]store.HistoryRecord, int, error) {
+	if len(all) == 0 {
+		return nil, 0, nil
+	}
+
+	totalPages := (len(all) + pageSize - 1) / pageSize
+	if page < 1 || page > totalPages {
+		return nil, totalPages, fmt.Errorf("page %d does not exist (%d page(s) available)", page, totalPages)
+	}
+
+	start := (page - 1) * pageSize
+	end := start + pageSize
+	if end > len(all) {
+		end = len(all)
+	}
+	return all[start:end], totalPages, nil
+}
+
+func printHistoryTable(all []store.HistoryRecord, page, pageSize int) error {
 	th := ResolveTheme()
 	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(th.AccentColor))
+	hintStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(th.HintColor))
 	cellStyle := lipgloss.NewStyle().Padding(0, 1)
 
-	if len(records) == 0 {
+	if len(all) == 0 {
 		fmt.Println("No timer history yet.")
-		return
+		return nil
+	}
+
+	records, totalPages, err := paginate(all, page, pageSize)
+	if err != nil {
+		return err
 	}
 
 	t := table.New().
@@ -95,14 +126,23 @@ func printHistoryTable(records []store.HistoryRecord) {
 	}
 	fmt.Println(t.Render())
 
+	start := (page-1)*pageSize + 1
+	end := start + len(records) - 1
+	fmt.Println()
+	fmt.Println(hintStyle.Render(fmt.Sprintf("Page %d of %d (records %d–%d of %d)", page, totalPages, start, end, len(all))))
+	if page < totalPages {
+		fmt.Println(hintStyle.Render(fmt.Sprintf("Use --page %d to see the next page.", page+1)))
+	}
+
 	fmt.Println()
 	fmt.Println(headerStyle.Render("Totals by title:"))
-	for title, stats := range aggregateStats(records) {
+	for title, stats := range aggregateStats(all) {
 		if title == "" {
 			title = "(untitled)"
 		}
 		fmt.Printf("  %s: %d session(s), %s total\n", title, stats.Count, timeutil.FormatHMS(stats.Total))
 	}
+	return nil
 }
 
 func aggregateStats(records []store.HistoryRecord) map[string]store.TitleStats {

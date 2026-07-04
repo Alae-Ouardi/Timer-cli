@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -93,8 +95,7 @@ func TestExportHistoryCSV(t *testing.T) {
 
 func TestPrintHistoryTableEmptyNoPanic(t *testing.T) {
 	_, err := captureStdout(t, func() error {
-		printHistoryTable(nil)
-		return nil
+		return printHistoryTable(nil, 1, 20)
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -103,13 +104,90 @@ func TestPrintHistoryTableEmptyNoPanic(t *testing.T) {
 
 func TestPrintHistoryTableWithRecordsNoPanic(t *testing.T) {
 	out, err := captureStdout(t, func() error {
-		printHistoryTable(sampleRecords())
-		return nil
+		return printHistoryTable(sampleRecords(), 1, 20)
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if out == "" {
 		t.Error("expected non-empty table output")
+	}
+}
+
+func manyRecords(n int) []store.HistoryRecord {
+	now := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+	records := make([]store.HistoryRecord, n)
+	for i := 0; i < n; i++ {
+		records[i] = store.HistoryRecord{
+			ID: strconv.Itoa(i), Title: "Session", Mode: "stopwatch",
+			Elapsed: time.Minute, StartedAt: now, EndedAt: now.Add(time.Minute), Completed: true,
+		}
+	}
+	return records
+}
+
+func TestPaginateFirstPage(t *testing.T) {
+	page, totalPages, err := paginate(manyRecords(45), 1, 20)
+	if err != nil {
+		t.Fatalf("paginate() unexpected error: %v", err)
+	}
+	if len(page) != 20 {
+		t.Errorf("len(page) = %d, want 20", len(page))
+	}
+	if totalPages != 3 {
+		t.Errorf("totalPages = %d, want 3", totalPages)
+	}
+}
+
+func TestPaginateLastPagePartial(t *testing.T) {
+	page, totalPages, err := paginate(manyRecords(45), 3, 20)
+	if err != nil {
+		t.Fatalf("paginate() unexpected error: %v", err)
+	}
+	if len(page) != 5 {
+		t.Errorf("len(page) = %d, want 5 (45 - 2*20)", len(page))
+	}
+	if totalPages != 3 {
+		t.Errorf("totalPages = %d, want 3", totalPages)
+	}
+}
+
+func TestPaginateOutOfRangeReturnsError(t *testing.T) {
+	if _, _, err := paginate(manyRecords(45), 4, 20); err == nil {
+		t.Error("paginate() expected error for out-of-range page, got nil")
+	}
+	if _, _, err := paginate(manyRecords(45), 0, 20); err == nil {
+		t.Error("paginate() expected error for page 0, got nil")
+	}
+}
+
+func TestPaginateEmptyReturnsNoError(t *testing.T) {
+	page, totalPages, err := paginate(nil, 1, 20)
+	if err != nil {
+		t.Fatalf("paginate(nil) unexpected error: %v", err)
+	}
+	if page != nil || totalPages != 0 {
+		t.Errorf("paginate(nil) = %v, %d, want nil, 0", page, totalPages)
+	}
+}
+
+func TestPrintHistoryTableOutOfRangePageReturnsError(t *testing.T) {
+	_, err := captureStdout(t, func() error {
+		return printHistoryTable(sampleRecords(), 99, 20)
+	})
+	if err == nil {
+		t.Error("printHistoryTable() expected error for out-of-range page, got nil")
+	}
+}
+
+func TestPrintHistoryTablePaginatesLargeSets(t *testing.T) {
+	out, err := captureStdout(t, func() error {
+		return printHistoryTable(manyRecords(45), 2, 20)
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "Page 2 of 3") {
+		t.Errorf("expected output to mention 'Page 2 of 3', got:\n%s", out)
 	}
 }

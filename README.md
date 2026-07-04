@@ -109,21 +109,25 @@ timer p "Study session" --work 25m --break 5m --rounds 4
 
 ### `timer history` / `h`
 
-Shows past timer sessions (newest first) with per-title totals. Supports searching by title and exporting to JSON or CSV.
+Shows past timer sessions (newest first) with per-title totals. Supports searching by title, exporting to JSON or CSV, and pagination.
 
 ```
-timer history [--search <substr>] [--export json|csv]
+timer history [--search <substr>] [--page <n>] [--export json|csv]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--search` | Filter sessions by title substring (case-insensitive) |
-| `--export` | Export all matching sessions as `json` or `csv` to stdout |
+| `--page` | Page of results to show, 20 records per page (default `1`) |
+| `--export` | Export **all** matching sessions (ignores `--page`) as `json` or `csv` to stdout |
+
+The table shows 20 records at a time so it stays readable even with hundreds of sessions — "Totals by title" always reflects every matching session, not just the current page.
 
 **Examples:**
 
 ```bash
 timer h
+timer h --page 2
 timer h --search "Deep"
 timer h --export csv > sessions.csv
 ```
